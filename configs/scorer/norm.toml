@@ -1,0 +1,85 @@
+[job]
+dump_folder = "<DUMP_FOLDER>"
+description = "Lighthouse: scorer=norm, k=2048, p=4, L=3"
+
+[profiling]
+enable_profiling = false
+save_traces_folder = "profile_trace"
+profile_freq = 100
+
+[metrics]
+log_freq = 1
+enable_tensorboard = false
+save_tb_folder = "tb"
+enable_wandb = true
+
+[model]
+name = "llama3"
+flavor = "ablation_270m_lighthouse_topk2048_pool4_lvl3"
+# Scorer override (default "norm" if omitted). The patch reads this from
+# the flavor; to override per-config, edit the flavor in __init__.py or
+# add a thin wrapper. See README.md.
+# lighthouse_scorer = "norm"
+hf_assets_path = "<HF_ASSETS_PATH>"
+
+[optimizer]
+name = "AdamW"
+lr = 2e-3
+eps = 1e-8
+beta1 = 0.9
+beta2 = 0.95
+weight_decay = 0.1
+
+[lr_scheduler]
+warmup_steps = 2000
+decay_ratio = 0.0
+decay_type = "linear"
+min_lr_factor = 0.01
+
+[training]
+local_batch_size = 1
+global_batch_size = 32
+seq_len = 98304
+max_norm = 1.0
+steps = 10000
+dataset = "c4_local"
+
+[parallelism]
+data_parallel_replicate_degree = 1
+data_parallel_shard_degree = -1
+tensor_parallel_degree = 1
+pipeline_parallel_degree = 1
+context_parallel_degree = 1
+
+[checkpoint]
+enable = true
+folder = "<CHECKPOINT_FOLDER>"
+interval = 10000
+last_save_model_only = false
+keep_latest_k = 50
+enable_first_step_checkpoint = true
+export_dtype = "bfloat16"
+async_mode = "disabled"
+
+[compile]
+enable = true
+fullgraph = false
+components = ["model", "loss"]
+
+[activation_checkpoint]
+mode = "none"
+selective_ac_option = "op"
+
+[quantize.linear.float8]
+enable_fsdp_float8_all_gather = false
+precompute_float8_dynamic_scale_for_fsdp = false
+filter_fqns = ["output"]
+
+[debug]
+seed = 42
+
+[validation]
+enable = false
+dataset = "c4_validation"
+freq = 500
+steps = 1200
