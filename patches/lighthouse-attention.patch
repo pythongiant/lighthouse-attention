@@ -847,3 +847,19 @@ index 1889548..951d8ec 100644
                  self.checkpointer.save(
                      self.step, last_step=(self.step == job_config.training.steps)
                  )
+diff --git a/torchtitan/hf_datasets/text_datasets.py b/torchtitan/hf_datasets/text_datasets.py
+index 4c88a36f..dae67ea4 100644
+--- a/torchtitan/hf_datasets/text_datasets.py
++++ b/torchtitan/hf_datasets/text_datasets.py
+@@ -43,6 +43,11 @@ DATASETS = {
+         loader=partial(_load_c4_dataset, split="train"),
+         sample_processor=_process_c4_text,
+     ),
++    "c4_local": DatasetConfig(
++        path="/home/nous/c4",
++        loader=partial(_load_c4_dataset, split="train"),
++        sample_processor=_process_c4_text,
++    ),
+     "c4_test": DatasetConfig(
+         path="tests/assets/c4_test",
+         loader=lambda path: load_dataset(path, split="train"),
