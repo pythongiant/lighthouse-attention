@@ -856,7 +856,7 @@ index 4c88a36f..dae67ea4 100644
          sample_processor=_process_c4_text,
      ),
 +    "c4_local": DatasetConfig(
-+        path="/home/nous/c4",
++        path="/home/c4",
 +        loader=partial(_load_c4_dataset, split="train"),
 +        sample_processor=_process_c4_text,
 +    ),
