@@ -1,7 +1,7 @@
 # Lighthouse Attention
 
 Reference / **original implementation** of *Lighthouse Attention*: a
-selection-based sparse attention mechanism for training large language
+selection-based hierarchical attention mechanism for training large language
 models at very long context. This is the codebase used to produce all
 results in the paper.
 
