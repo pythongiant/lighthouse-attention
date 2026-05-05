@@ -1,0 +1,863 @@
+diff --git a/torchtitan/config/job_config.py b/torchtitan/config/job_config.py
+index 95588d2c..7fc79ef1 100644
+--- a/torchtitan/config/job_config.py
++++ b/torchtitan/config/job_config.py
+@@ -662,6 +662,11 @@ class Compile:
+     """Which components to compile"""
+     backend: str = "inductor"
+ 
++    fullgraph: bool = False
++    """Whether to compile transformer blocks with `fullgraph=True`. Lighthouse
++    selection uses `@torch.compiler.disable` which creates graph breaks, so the
++    Lighthouse path requires `fullgraph=False`."""
++
+ 
+ @dataclass
+ class Float8Linear:
+diff --git a/torchtitan/distributed/utils.py b/torchtitan/distributed/utils.py
+index f424276a..893b110d 100644
+--- a/torchtitan/distributed/utils.py
++++ b/torchtitan/distributed/utils.py
+@@ -201,16 +201,21 @@ def create_context_parallel_ctx(
+     cp_seq_dims: list[int],
+     cp_no_restore_buffers: set[torch.Tensor],
+     cp_rotate_method: str,
++    enable_load_balance: bool = True,
+ ):
+     try:
+         from torch.distributed.tensor.experimental import context_parallel
+         from torch.distributed.tensor.experimental._attention import set_rotate_method
++        from torch.distributed.tensor.experimental._context_parallel._attention import (
++            _cp_options,
++        )
+     except ImportError:
+         print(
+             f"PyTorch version {torch.__version__} does not include the experimental "
+             "Context Parallel API. Please update to a newer version."
+         )
+ 
++    _cp_options.enable_load_balance = enable_load_balance
+     set_rotate_method(cp_rotate_method)
+     return context_parallel(
+         cp_mesh,
+diff --git a/torchtitan/hf_datasets/text_datasets.py b/torchtitan/hf_datasets/text_datasets.py
+index 493cd1ab..fdb37af1 100644
+--- a/torchtitan/hf_datasets/text_datasets.py
++++ b/torchtitan/hf_datasets/text_datasets.py
+@@ -38,6 +38,11 @@ DATASETS = {
+         loader=partial(_load_c4_dataset, split="train"),
+         sample_processor=_process_c4_text,
+     ),
++    "c4_local": DatasetConfig(
++        path="/home/c4",
++        loader=partial(_load_c4_dataset, split="train"),
++        sample_processor=_process_c4_text,
++    ),
+     "c4_test": DatasetConfig(
+         path="tests/assets/c4_test",
+         loader=lambda path: load_dataset(path, split="train"),
+diff --git a/torchtitan/models/llama3/__init__.py b/torchtitan/models/llama3/__init__.py
+index 191588ad..9a7ba883 100644
+--- a/torchtitan/models/llama3/__init__.py
++++ b/torchtitan/models/llama3/__init__.py
+@@ -27,26 +27,217 @@ __all__ = [
+ 
+ 
+ llama3_args = {
+-    "debugmodel": TransformerModelArgs(
+-        dim=256, n_layers=6, n_heads=16, vocab_size=2048, rope_theta=500000
+-    ),
+-    "debugmodel_flex_attn": TransformerModelArgs(
+-        dim=256,
+-        n_layers=6,
+-        n_heads=16,
+-        vocab_size=2048,
+-        rope_theta=500000,
+-        use_flex_attn=True,
+-        attn_mask_type="block_causal",
++    "ablation_270m": TransformerModelArgs(
++        dim=576,
++        n_layers=30,
++        hidden_dim=1536,
++        n_heads=8,
++        n_kv_heads=8,
++        rope_theta=10000,
+     ),
+-    "8B": TransformerModelArgs(
+-        dim=4096,
+-        n_layers=32,
+-        n_heads=32,
++    # "ablation_270m_lighthouse": TransformerModelArgs(
++    #     dim=1024,
++    #     n_layers=30,
++    #     hidden_dim=1536,
++    #     n_heads=8,
++    #     n_kv_heads=8,
++    #     rope_theta=10000,
++    # ),
++    "ablation_270m_lighthouse": TransformerModelArgs(
++        dim=1024,
++        n_layers=30,
++        hidden_dim=1536,
++        n_heads=8,
+         n_kv_heads=8,
+-        ffn_dim_multiplier=1.3,
+-        multiple_of=1024,
+-        rope_theta=500000,
++        rope_theta=10000,
++        use_selection_lighthouse=True,
++        lighthouse_num_levels=2,
++        lighthouse_pooling_factor=2,
++        lighthouse_topk=8192,
++        dilation=4,
++        lighthouse_full_attn_layers=[0, 1, 28, 29],
++    ),
++    "ablation_270m_lighthouse_topk4096": TransformerModelArgs(
++        dim=1024,
++        n_layers=30,
++        hidden_dim=1536,
++        n_heads=8,
++        n_kv_heads=8,
++        rope_theta=10000,
++        use_selection_lighthouse=True,
++        lighthouse_num_levels=2,
++        lighthouse_pooling_factor=2,
++        lighthouse_topk=4096,
++        dilation=4,
++        lighthouse_full_attn_layers=[0, 1, 28, 29],
++    ),
++    "ablation_270m_lighthouse_topk8192": TransformerModelArgs(
++        dim=1024,
++        n_layers=30,
++        hidden_dim=1536,
++        n_heads=8,
++        n_kv_heads=8,
++        rope_theta=10000,
++        use_selection_lighthouse=True,
++        lighthouse_num_levels=2,
++        lighthouse_pooling_factor=2,
++        lighthouse_topk=8192,
++        dilation=4,
++        lighthouse_full_attn_layers=[0, 1, 28, 29],
++    ),
++    "ablation_270m_lighthouse_topk16384": TransformerModelArgs(
++        dim=1024,
++        n_layers=30,
++        hidden_dim=1536,
++        n_heads=8,
++        n_kv_heads=8,
++        rope_theta=10000,
++        use_selection_lighthouse=True,
++        lighthouse_num_levels=2,
++        lighthouse_pooling_factor=2,
++        lighthouse_topk=16384,
++        dilation=4,
++        lighthouse_full_attn_layers=[0, 1, 28, 29],
++    ),
++    "ablation_270m_lighthouse_topk8192_pool4": TransformerModelArgs(
++        dim=1024,
++        n_layers=30,
++        hidden_dim=1536,
++        n_heads=8,
++        n_kv_heads=8,
++        rope_theta=10000,
++        use_selection_lighthouse=True,
++        lighthouse_num_levels=2,
++        lighthouse_pooling_factor=4,
++        lighthouse_topk=8192,
++        dilation=4,
++        lighthouse_full_attn_layers=[0, 1, 28, 29],
++    ),
++    "ablation_270m_lighthouse_topk4096_pool4": TransformerModelArgs(
++        dim=1024,
++        n_layers=30,
++        hidden_dim=1536,
++        n_heads=8,
++        n_kv_heads=8,
++        rope_theta=10000,
++        use_selection_lighthouse=True,
++        lighthouse_num_levels=2,
++        lighthouse_pooling_factor=4,
++        lighthouse_topk=4096,
++        dilation=4,
++        lighthouse_full_attn_layers=[0, 1, 28, 29],
++    ),
++    "ablation_270m_lighthouse_topk2048_pool4": TransformerModelArgs(
++        dim=1024,
++        n_layers=30,
++        hidden_dim=1536,
++        n_heads=8,
++        n_kv_heads=8,
++        rope_theta=10000,
++        use_selection_lighthouse=True,
++        lighthouse_num_levels=2,
++        lighthouse_pooling_factor=4,
++        lighthouse_topk=2048,
++        dilation=4,
++        lighthouse_full_attn_layers=[0, 1, 28, 29],
++    ),
++    "ablation_270m_lighthouse_topk8192_lvl3": TransformerModelArgs(
++        dim=1024,
++        n_layers=30,
++        hidden_dim=1536,
++        n_heads=8,
++        n_kv_heads=8,
++        rope_theta=10000,
++        use_selection_lighthouse=True,
++        lighthouse_num_levels=3,
++        lighthouse_pooling_factor=2,
++        lighthouse_topk=8192,
++        dilation=4,
++        lighthouse_full_attn_layers=[0, 1, 28, 29],
++    ),
++    "ablation_270m_lighthouse_topk4096_lvl3": TransformerModelArgs(
++        dim=1024,
++        n_layers=30,
++        hidden_dim=1536,
++        n_heads=8,
++        n_kv_heads=8,
++        rope_theta=10000,
++        use_selection_lighthouse=True,
++        lighthouse_num_levels=3,
++        lighthouse_pooling_factor=2,
++        lighthouse_topk=4096,
++        dilation=4,
++        lighthouse_full_attn_layers=[0, 1, 28, 29],
++    ),
++    "ablation_270m_lighthouse_topk1536_lvl3": TransformerModelArgs(
++        dim=1024,
++        n_layers=30,
++        hidden_dim=1536,
++        n_heads=8,
++        n_kv_heads=8,
++        rope_theta=10000,
++        use_selection_lighthouse=True,
++        lighthouse_num_levels=3,
++        lighthouse_pooling_factor=2,
++        lighthouse_topk=1536,
++        dilation=4,
++        lighthouse_full_attn_layers=[0, 1, 28, 29],
++    ),
++    "ablation_270m_lighthouse_topk2048_lvl3": TransformerModelArgs(
++        dim=1024,
++        n_layers=30,
++        hidden_dim=1536,
++        n_heads=8,
++        n_kv_heads=8,
++        rope_theta=10000,
++        use_selection_lighthouse=True,
++        lighthouse_num_levels=3,
++        lighthouse_pooling_factor=2,
++        lighthouse_topk=2048,
++        dilation=4,
++        lighthouse_full_attn_layers=[0, 1, 28, 29],
++    ),
++    "ablation_270m_lighthouse_topk3072_lvl3": TransformerModelArgs(
++        dim=1024,
++        n_layers=30,
++        hidden_dim=1536,
++        n_heads=8,
++        n_kv_heads=8,
++        rope_theta=10000,
++        use_selection_lighthouse=True,
++        lighthouse_num_levels=3,
++        lighthouse_pooling_factor=2,
++        lighthouse_topk=3072,
++        dilation=4,
++        lighthouse_full_attn_layers=[0, 1, 28, 29],
++    ),
++    "ablation_270m_lighthouse_topk6144_lvl3": TransformerModelArgs(
++        dim=1024,
++        n_layers=30,
++        hidden_dim=1536,
++        n_heads=8,
++        n_kv_heads=8,
++        rope_theta=10000,
++        use_selection_lighthouse=True,
++        lighthouse_num_levels=3,
++        lighthouse_pooling_factor=2,
++        lighthouse_topk=6144,
++        dilation=4,
++        lighthouse_full_attn_layers=[0, 1, 28, 29],
++    ),
++    "ablation_270m_lighthouse_topk2048_pool4_lvl3": TransformerModelArgs(
++        dim=1024,
++        n_layers=30,
++        hidden_dim=1536,
++        n_heads=8,
++        n_kv_heads=8,
++        rope_theta=10000,
++        use_selection_lighthouse=True,
++        lighthouse_num_levels=3,
++        lighthouse_pooling_factor=4,
++        lighthouse_topk=2048,
++        dilation=4,
++        lighthouse_full_attn_layers=[0, 1, 28, 29],
+     ),
+     "70B": TransformerModelArgs(
+         dim=8192,
+@@ -66,9 +257,235 @@ llama3_args = {
+         multiple_of=4096,
+         rope_theta=500000,
+     ),
++    "ablation_270m_topk1536_pool4_lvl3_sdpa": TransformerModelArgs(
++        dim=1024,
++        n_layers=30,
++        hidden_dim=1536,
++        n_heads=8,
++        n_kv_heads=8,
++        rope_theta=10000,
++    ),
++    "ablation_270m_lighthouse_topk1536_pool4_lvl3": TransformerModelArgs(
++        dim=1024,
++        n_layers=30,
++        hidden_dim=1536,
++        n_heads=8,
++        n_kv_heads=8,
++        rope_theta=10000,
++        use_selection_lighthouse=True,
++        lighthouse_num_levels=3,
++        lighthouse_pooling_factor=4,
++        lighthouse_topk=1536,
++        dilation=4,
++        lighthouse_full_attn_layers=[0, 1, 28, 29],
++    ),
++    "ablation_270m_lighthouse_topk4096_pool4_lvl3_cp": TransformerModelArgs(
++        dim=1024,
++        n_layers=30,
++        hidden_dim=1536,
++        n_heads=8,
++        n_kv_heads=8,
++        rope_theta=10000,
++        use_selection_lighthouse=True,
++        use_lighthouse_cp=True,
++        lighthouse_num_levels=3,
++        lighthouse_pooling_factor=4,
++        lighthouse_topk=4096,
++        dilation=4,
++        lighthouse_full_attn_layers=[0, 1, 28, 29],
++    ),
++    "ablation_270m_lighthouse_topk4096_pool4_lvl4_cp_1m": TransformerModelArgs(
++        dim=1024,
++        n_layers=30,
++        hidden_dim=1536,
++        n_heads=8,
++        n_kv_heads=8,
++        rope_theta=10000,
++        use_selection_lighthouse=True,
++        use_lighthouse_cp=True,
++        lighthouse_num_levels=4,
++        lighthouse_pooling_factor=4,
++        lighthouse_topk=4096,
++        dilation=4,
++        lighthouse_full_attn_layers=[],
++    ),
++    "ablation_270m_lighthouse_topk6144_pool4_lvl4_cp": TransformerModelArgs(
++        dim=1024,
++        n_layers=30,
++        hidden_dim=1536,
++        n_heads=8,
++        n_kv_heads=8,
++        rope_theta=10000,
++        use_selection_lighthouse=True,
++        use_lighthouse_cp=True,
++        lighthouse_num_levels=4,
++        lighthouse_pooling_factor=4,
++        lighthouse_topk=6144,
++        dilation=4,
++        lighthouse_full_attn_layers=[0, 1, 28, 29],
++    ),
++    "ablation_270m_lighthouse_topk16384_pool4_lvl3_cp": TransformerModelArgs(
++        dim=1024,
++        n_layers=30,
++        hidden_dim=1536,
++        n_heads=8,
++        n_kv_heads=8,
++        rope_theta=10000,
++        use_selection_lighthouse=True,
++        use_lighthouse_cp=True,
++        lighthouse_num_levels=3,
++        lighthouse_pooling_factor=4,
++        lighthouse_topk=16384,
++        dilation=4,
++        lighthouse_full_attn_layers=[0, 1, 28, 29],
++    ),
++    "ablation_270m_lighthouse_topk1536_pool4_lvl3_cp": TransformerModelArgs(
++        dim=1024,
++        n_layers=30,
++        hidden_dim=1536,
++        n_heads=8,
++        n_kv_heads=8,
++        rope_theta=10000,
++        use_selection_lighthouse=True,
++        use_lighthouse_cp=True,
++        lighthouse_num_levels=3,
++        lighthouse_pooling_factor=4,
++        lighthouse_topk=1536,
++        dilation=4,
++        lighthouse_full_attn_layers=[0, 1, 28, 29],
++    ),
++    "ablation_270m_lighthouse_topk2048_pool4_lvl3_cp": TransformerModelArgs(
++        dim=1024,
++        n_layers=30,
++        hidden_dim=1536,
++        n_heads=8,
++        n_kv_heads=8,
++        rope_theta=10000,
++        use_selection_lighthouse=True,
++        use_lighthouse_cp=True,
++        lighthouse_num_levels=3,
++        lighthouse_pooling_factor=4,
++        lighthouse_topk=2048,
++        dilation=4,
++        lighthouse_full_attn_layers=[0, 1, 28, 29],
++    ),
++    "ablation_270m_lighthouse_topk1536_pool8_lvl3": TransformerModelArgs(
++        dim=1024,
++        n_layers=30,
++        hidden_dim=1536,
++        n_heads=8,
++        n_kv_heads=8,
++        rope_theta=10000,
++        use_selection_lighthouse=True,
++        lighthouse_num_levels=3,
++        lighthouse_pooling_factor=8,
++        lighthouse_topk=1536,
++        dilation=4,
++        lighthouse_full_attn_layers=[0, 1, 28, 29],
++    ),
++    "ablation_270m_lighthouse_topk768_pool4_lvl3": TransformerModelArgs(
++        dim=1024,
++        n_layers=30,
++        hidden_dim=1536,
++        n_heads=8,
++        n_kv_heads=8,
++        rope_theta=10000,
++        use_selection_lighthouse=True,
++        lighthouse_num_levels=3,
++        lighthouse_pooling_factor=4,
++        lighthouse_topk=768,
++        dilation=4,
++        lighthouse_full_attn_layers=[0, 1, 28, 29],
++    ),
++    "ablation_270m_lighthouse_topk768_pool8_lvl3": TransformerModelArgs(
++        dim=1024,
++        n_layers=30,
++        hidden_dim=1536,
++        n_heads=8,
++        n_kv_heads=8,
++        rope_theta=10000,
++        use_selection_lighthouse=True,
++        lighthouse_num_levels=3,
++        lighthouse_pooling_factor=8,
++        lighthouse_topk=768,
++        dilation=4,
++        lighthouse_full_attn_layers=[0, 1, 28, 29],
++    ),
++    "ablation_270m_lighthouse_topk2048_lvl4": TransformerModelArgs(
++        dim=1024,
++        n_layers=30,
++        hidden_dim=1536,
++        n_heads=8,
++        n_kv_heads=8,
++        rope_theta=10000,
++        use_selection_lighthouse=True,
++        lighthouse_num_levels=4,
++        lighthouse_pooling_factor=2,
++        lighthouse_topk=2048,
++        dilation=4,
++        lighthouse_full_attn_layers=[0, 1, 28, 29],
++    ),
++    "ablation_270m_lighthouse_topk1536_lvl4": TransformerModelArgs(
++        dim=1024,
++        n_layers=30,
++        hidden_dim=1536,
++        n_heads=8,
++        n_kv_heads=8,
++        rope_theta=10000,
++        use_selection_lighthouse=True,
++        lighthouse_num_levels=4,
++        lighthouse_pooling_factor=2,
++        lighthouse_topk=1536,
++        dilation=4,
++        lighthouse_full_attn_layers=[0, 1, 28, 29],
++    ),
++    "ablation_270m_lighthouse_topk2048_lvl5": TransformerModelArgs(
++        dim=1024,
++        n_layers=30,
++        hidden_dim=1536,
++        n_heads=8,
++        n_kv_heads=8,
++        rope_theta=10000,
++        use_selection_lighthouse=True,
++        lighthouse_num_levels=5,
++        lighthouse_pooling_factor=2,
++        lighthouse_topk=2048,
++        dilation=4,
++        lighthouse_full_attn_layers=[0, 1, 28, 29],
++    ),
++    "ablation_270m_lighthouse_topk1536_lvl5": TransformerModelArgs(
++        dim=1024,
++        n_layers=30,
++        hidden_dim=1536,
++        n_heads=8,
++        n_kv_heads=8,
++        rope_theta=10000,
++        use_selection_lighthouse=True,
++        lighthouse_num_levels=5,
++        lighthouse_pooling_factor=2,
++        lighthouse_topk=1536,
++        dilation=4,
++        lighthouse_full_attn_layers=[0, 1, 28, 29],
++    ),
++    #Change the 2b smolLM to a olmo model? Show it working on a variety of different models
++    "ablation_2b": TransformerModelArgs(
++        dim=2048,
++        n_layers=24,
++        hidden_dim=8192,
++        n_heads=32,
++        n_kv_heads=32,
++        rope_theta=10000,
++    ),
++    "llama_8b": TransformerModelArgs(
++        dim=4096,
++        n_layers=32,
++        hidden_dim=14336,
++        n_heads=32,
++        n_kv_heads=8,
++        rope_theta=10000,
++    ),
+ }
+ 
+-
+ def get_train_spec() -> TrainSpec:
+     return TrainSpec(
+         model_cls=Transformer,
+diff --git a/torchtitan/models/llama3/infra/parallelize.py b/torchtitan/models/llama3/infra/parallelize.py
+index 86ac3a6d..c36ffb7a 100644
+--- a/torchtitan/models/llama3/infra/parallelize.py
++++ b/torchtitan/models/llama3/infra/parallelize.py
+@@ -242,7 +242,9 @@ def apply_compile(model: nn.Module, compile_config: CompileConfig):
+     """
+     for layer_id, transformer_block in model.layers.named_children():
+         transformer_block = torch.compile(
+-            transformer_block, backend=compile_config.backend, fullgraph=True
++            transformer_block,
++            backend=compile_config.backend,
++            fullgraph=compile_config.fullgraph,
+         )
+         model.layers.register_module(layer_id, transformer_block)
+ 
+diff --git a/torchtitan/models/llama3/model/args.py b/torchtitan/models/llama3/model/args.py
+index d83fb831..00b8b1fe 100644
+--- a/torchtitan/models/llama3/model/args.py
++++ b/torchtitan/models/llama3/model/args.py
+@@ -34,10 +34,12 @@ class TransformerModelArgs(BaseModelArgs):
+     vocab_size: int = 128256
+     multiple_of: int = 256  # make SwiGLU hidden layer size multiple of large power of 2
+     ffn_dim_multiplier: float | None = None
++    hidden_dim: int | None = None  # Lighthouse: explicit FFN hidden dim (overrides multiple_of/ffn_dim_multiplier)
+     norm_eps: float = 1e-5
+     rope_theta: float = 10000
+     rope_scaling_args: RoPEScalingArgs = field(default_factory=RoPEScalingArgs)
+ 
++    dilation: int = 4
+     max_seq_len: int = 131072
+     # If `True`, then each transformer block init uses its layer ID, and if
+     # `False`, each uses the total number of transformer blocks
+@@ -47,6 +49,14 @@ class TransformerModelArgs(BaseModelArgs):
+     attn_mask_type: str = "causal"
+     eos_id: int = 0
+ 
++    use_selection_lighthouse: bool = False
++    use_lighthouse_cp: bool = False
++    lighthouse_num_levels: int = 3
++    lighthouse_pooling_factor: int = 16
++    lighthouse_topk: int = 16
++    lighthouse_scorer: str = "norm"  # "norm" | "dilated" | "gla"  (CP path supports only "norm")
++    lighthouse_full_attn_layers: list[int] | None = None
++
+     def update_from_config(self, job_config: JobConfig, **kwargs) -> None:
+         seq_len = job_config.training.seq_len
+         if seq_len > self.max_seq_len:
+diff --git a/torchtitan/models/llama3/model/model.py b/torchtitan/models/llama3/model/model.py
+index 124153f1..343e2506 100644
+--- a/torchtitan/models/llama3/model/model.py
++++ b/torchtitan/models/llama3/model/model.py
+@@ -21,6 +21,54 @@ from torchtitan.models.attention import (
+     get_document_mask_mod,
+     ScaledDotProductAttentionWrapper,
+ )
++from torchtitan.models.llama3.model.lighthouse_selection import (
++    DilatedLighthouseScorer as DLSLocal,
++    DialatedLighthouseNormScorer as DLSNormLocal,
++    DilatedLighthouseGLAScorer as DLSGLALocal,
++    LighthouseLocal as LLocal,
++    DialatedLighthouseNormScorerCP as DLSNormCP,
++    LighthouseCP as LCP,
++)
++
++
++def _build_lighthouse_scorer(model_args, head_dim: int):
++    """Construct a Lighthouse scorer from `model_args.lighthouse_scorer`.
++
++    Returns `(scorer, needs_gate)` where `needs_gate=True` for the GLA scorer
++    (so the caller knows to instantiate a per-token gate projection `wg` and
++    pass `gk` through the forward path).
++    """
++    name = (model_args.lighthouse_scorer or "norm").lower()
++    use_cp = bool(getattr(model_args, "use_lighthouse_cp", False))
++    if use_cp and name != "norm":
++        raise ValueError(
++            f"lighthouse_scorer='{name}' is not supported under context "
++            "parallelism. The CP path was validated only for 'norm'; set "
++            "lighthouse_scorer='norm' or disable use_lighthouse_cp."
++        )
++    common = dict(
++        pooling_factor=model_args.lighthouse_pooling_factor,
++        levels=model_args.lighthouse_num_levels,
++    )
++    if name == "norm":
++        cls = DLSNormCP if use_cp else DLSNormLocal
++        return cls(**common), False
++    if name == "dilated":
++        return DLSLocal(
++            head_dim=head_dim,
++            dilation=getattr(model_args, "dilation", 4),
++            **common,
++        ), False
++    if name == "gla":
++        return DLSGLALocal(
++            head_dim=head_dim,
++            dilation=getattr(model_args, "dilation", 4),
++            **common,
++        ), True
++    raise ValueError(
++        f"Unknown lighthouse_scorer={name!r}; expected one of "
++        "{'norm', 'dilated', 'gla'}."
++    )
+ from torchtitan.protocols.model import AttentionMasksType
+ from torchtitan.protocols.train_spec import ModelProtocol
+ 
+@@ -197,10 +245,57 @@ class Attention(nn.Module):
+         else:
+             self.inner_attention = ScaledDotProductAttentionWrapper()
+ 
++        self.use_selection_lighthouse = model_args.use_selection_lighthouse
++        self.use_lighthouse_cp = getattr(model_args, "use_lighthouse_cp", False)
++        self._use_lighthouse = self.use_selection_lighthouse
++        self.pooling_factor = model_args.lighthouse_pooling_factor
++        self.num_levels = model_args.lighthouse_num_levels
++        self.topk = model_args.lighthouse_topk
++        self.dilation = model_args.dilation
++
++        # Scorer is selected from config (see _build_lighthouse_scorer above).
++        # `self._needs_gate` is True iff the chosen scorer expects a per-token
++        # gate `gk` (currently only the GLA scorer); we then add a small gate
++        # projection `wg` and produce `gk = log_sigmoid(wg(x)) / norm` in
++        # the forward pass.
++        self.scorer, self._needs_gate = _build_lighthouse_scorer(
++            model_args, head_dim=self.head_dim
++        )
++        if self._needs_gate:
++            self.wg = nn.Linear(model_args.dim, self.n_heads, bias=True)
++            self.gate_logit_normalizer = 16
++
++        if self.use_lighthouse_cp:
++            self.selection_attn = LCP(
++                attention=self.inner_attention,
++                scorer=self.scorer,
++                num_levels=self.num_levels,
++                pooling_factor=self.pooling_factor,
++                topk=self.topk,
++            )
++        else:
++            self.selection_attn = LLocal(
++                scorer=self.scorer,
++                num_levels=self.num_levels,
++                pooling_factor=self.pooling_factor,
++                topk=self.topk,
++                attention=self.inner_attention,
++            )
++
+     def init_weights(self, init_std: float):
+         for linear in (self.wq, self.wk, self.wv):
+             nn.init.trunc_normal_(linear.weight, mean=0.0, std=0.02)
+         nn.init.trunc_normal_(self.wo.weight, mean=0.0, std=init_std)
++        if getattr(self, "_needs_gate", False):
++            nn.init.trunc_normal_(self.wg.weight, mean=0.0, std=0.02)
++            nn.init.zeros_(self.wg.bias)
++
++    def set_use_lighthouse(self, use_lighthouse: bool):
++        self._use_lighthouse = use_lighthouse
++
++    def set_cp_info(self, rank: int, world_size: int, cp_group):
++        if self.use_lighthouse_cp:
++            self.selection_attn.set_cp_info(rank, world_size, cp_group)
+ 
+     def forward(
+         self,
+@@ -236,20 +331,27 @@ class Attention(nn.Module):
+         keys = repeat_kv(xk, self.n_rep)  # (bs, seqlen, n_local_heads, head_dim)
+         values = repeat_kv(xv, self.n_rep)  # (bs, seqlen, n_local_heads, head_dim)
+ 
+-        xq = xq.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
+-        xk = keys.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
+-        xv = values.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
++        if self.use_selection_lighthouse and self._use_lighthouse:
++            if self._needs_gate:
++                gk = F.logsigmoid(self.wg(x)) / self.gate_logit_normalizer
++                output = self.selection_attn(xq, xk, xv, gk=gk)
++            else:
++                output = self.selection_attn(xq, xk, xv)
++        else:
++            xq = xq.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
++            xk = keys.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
++            xv = values.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
+ 
+-        assert (
+-            isinstance(attention_masks, BlockMask) or attention_masks is None
+-        ), attention_masks
++            assert (
++                isinstance(attention_masks, BlockMask) or attention_masks is None
++            ), attention_masks
+ 
+-        if self.use_flex_attn:
+-            assert isinstance(attention_masks, BlockMask), attention_masks
+-            output = self.inner_attention(xq, xk, xv, block_mask=attention_masks)
+-        else:
+-            assert attention_masks is None
+-            output = self.inner_attention(xq, xk, xv)
++            if self.use_flex_attn:
++                assert isinstance(attention_masks, BlockMask), attention_masks
++                output = self.inner_attention(xq, xk, xv, block_mask=attention_masks)
++            else:
++                assert attention_masks is None
++                output = self.inner_attention(xq, xk, xv)
+ 
+         output = output.transpose(
+             1, 2
+@@ -327,9 +429,12 @@ class TransformerBlock(nn.Module):
+         self.n_heads = model_args.n_heads
+         self.dim = model_args.dim
+         self.attention = Attention(model_args)
++        # Lighthouse-flavors set `hidden_dim` directly on TransformerModelArgs;
++        # fall back to upstream's 4*dim derivation when not set.
++        ffn_hidden = model_args.hidden_dim if model_args.hidden_dim is not None else 4 * model_args.dim
+         self.feed_forward = FeedForward(
+             dim=model_args.dim,
+-            hidden_dim=4 * model_args.dim,
++            hidden_dim=ffn_hidden,
+             multiple_of=model_args.multiple_of,
+             ffn_dim_multiplier=model_args.ffn_dim_multiplier,
+         )
+@@ -403,6 +508,15 @@ class Transformer(nn.Module, ModelProtocol):
+         self.layers = torch.nn.ModuleDict()
+         for layer_id in range(model_args.n_layers):
+             self.layers[str(layer_id)] = TransformerBlock(layer_id, model_args)
++
++        self._full_attn_layers: set[str] = set()
++        if model_args.lighthouse_full_attn_layers is not None:
++            for layer_id in model_args.lighthouse_full_attn_layers:
++                key = str(layer_id)
++                if key in self.layers:
++                    self.layers[key].attention.set_use_lighthouse(False)
++                    self._full_attn_layers.add(key)
++
+         self.norm = nn.RMSNorm(model_args.dim, eps=model_args.norm_eps)
+         self.output = nn.Linear(model_args.dim, model_args.vocab_size, bias=False)
+ 
+diff --git a/torchtitan/train.py b/torchtitan/train.py
+index 0070806e..eb47eb7c 100644
+--- a/torchtitan/train.py
++++ b/torchtitan/train.py
+@@ -66,6 +66,7 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
+     # additional training states
+     step: int
+     ntokens_seen: int
++    _lighthouse_cp_info_set: bool
+ 
+     # Enable debug tracing on failure: https://pytorch.org/docs/stable/elastic/errors.html
+     @record
+@@ -289,6 +290,7 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
+         # These attributes must be initialized before checkpoint loading.
+         self.step = 0
+         self.ntokens_seen = 0
++        self._lighthouse_cp_info_set = False
+ 
+         self.checkpointer = CheckpointManager(
+             dataloader=self.dataloader,
+@@ -472,19 +474,39 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
+         inputs, labels, extra_inputs, extra_kwargs = self.post_dataloading_process(
+             input_dict, labels
+         )
++
+         # apply context parallelism if cp is enabled
+-        # ensure CP handles the separate freqs_cis buffer for each pp stage
+-        optional_context_parallel_ctx = (
+-            dist_utils.create_context_parallel_ctx(
++        optional_context_parallel_ctx = None
++
++        if parallel_dims.cp_enabled:
++            cp_mesh = parallel_dims.world_mesh["cp"]
++            cp_world_size = cp_mesh.size()
++            cp_rank = cp_mesh.get_local_rank()
++
++            if (
++                getattr(self.model_args, "use_selection_lighthouse", False)
++                and getattr(self.model_args, "use_lighthouse_cp", False)
++                and not self._lighthouse_cp_info_set
++            ):
++                cp_group = cp_mesh.get_group()
++                for m in model_parts:
++                    for module in m.modules():
++                        if hasattr(module, "set_cp_info"):
++                            module.set_cp_info(cp_rank, cp_world_size, cp_group)
++                self._lighthouse_cp_info_set = True
++
++            is_lighthouse_cp = (
++                # getattr(self.model_args, "use_selection_lighthouse", False) and 
++                getattr(self.model_args, "use_lighthouse_cp", False)
++            )
++            optional_context_parallel_ctx = dist_utils.create_context_parallel_ctx(
+                 cp_mesh=parallel_dims.world_mesh["cp"],
+                 cp_buffers=[inputs, labels] + [m.freqs_cis for m in model_parts],
+                 cp_seq_dims=[1, 1] + [0 for _ in model_parts],
+                 cp_no_restore_buffers={inputs, labels},
+                 cp_rotate_method=self.job_config.parallelism.context_parallel_rotate_method,
++                enable_load_balance=is_lighthouse_cp,
+             )
+-            if parallel_dims.cp_enabled
+-            else None
+-        )
+ 
+         if parallel_dims.pp_enabled:
+             # Pipeline Parallel forward / backward inside step() call
+@@ -643,16 +665,27 @@ class Trainer(torch.distributed.checkpoint.stateful.Stateful):
+                 ),
+             ),
+         ):
++            # _nsys_profile_step = int(os.environ.get("NSYS_PROFILE_STEP", "0"))
++
+             data_iterator = self.batch_generator(self.dataloader)
+             while self.should_continue_training():
+                 self.step += 1
+                 self.gc_handler.run(self.step)
++
++                # if _nsys_profile_step and self.step == _nsys_profile_step:
++                #     torch.cuda.synchronize()
++                #     torch.cuda.cudart().cudaProfilerStart()
++
+                 try:
+                     self.train_step(data_iterator)
+                 except DataloaderExhaustedError:
+                     logger.warning("Ran out of data; last step was canceled.")
+                     break
+ 
++                # if _nsys_profile_step and self.step == _nsys_profile_step:
++                #     torch.cuda.synchronize()
++                #     torch.cuda.cudart().cudaProfilerStop()
++
+                 self.checkpointer.save(
+                     self.step, last_step=(self.step == job_config.training.steps)
+                 )
